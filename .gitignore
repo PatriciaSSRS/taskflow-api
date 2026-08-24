@@ -1,0 +1,21 @@
+# Node
+node_modules/
+dist/
+coverage/
+npm-debug.log*
+
+# Ambiente
+.env
+.env.local
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/.terraform.lock.hcl
+infra/terraform.tfvars
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store

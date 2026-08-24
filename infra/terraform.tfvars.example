@@ -1,0 +1,11 @@
+# Copie este arquivo para terraform.tfvars e preencha os valores.
+# NUNCA versione o terraform.tfvars real (já está no .gitignore).
+
+aws_region   = "us-east-1"
+project_name = "taskflow-api"
+environment  = "dev"
+
+db_password = "defina-uma-senha-forte-aqui"
+
+# Restrinja ao seu IP em produção, ex: "203.0.113.10/32"
+ssh_allowed_cidr = "0.0.0.0/0"

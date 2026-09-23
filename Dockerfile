@@ -2,7 +2,7 @@
 
 # ---- Stage 1: build ----
 # Compila o TypeScript. Fica de fora da imagem final: só o dist/ sai daqui.
-FROM node:20-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -12,13 +12,13 @@ RUN npm run build
 # ---- Stage 2: dependências de produção ----
 # Instalado separado do build para não herdar devDependencies (eslint,
 # ts-jest, etc.) na imagem final.
-FROM node:20-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
 # ---- Stage 3: runtime ----
-FROM node:20-alpine AS production
+FROM node:25-alpine AS production
 
 ARG GIT_COMMIT=unknown
 ARG APP_VERSION=unknown

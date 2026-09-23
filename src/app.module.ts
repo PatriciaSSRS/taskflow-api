@@ -4,10 +4,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TasksModule } from './tasks/tasks.module';
+import { HealthModule } from './health/health.module';
+import { MetricsModule } from './metrics/metrics.module';
+import { LoggerModule } from './common/logger.module';
+import { validateEnv } from './config/validate-env';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }),
+    LoggerModule,
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DB_HOST ?? 'localhost',
@@ -16,9 +21,16 @@ import { TasksModule } from './tasks/tasks.module';
       password: process.env.DB_PASSWORD ?? 'taskflow',
       database: process.env.DB_NAME ?? 'taskflow',
       autoLoadEntities: true,
-      synchronize: process.env.NODE_ENV !== 'production',
+      // Schema é sempre gerenciado por migração versionada (nunca por
+      // synchronize), em dev e em produção, para o schema que roda
+      // localmente ser garantidamente o mesmo que sobe no deploy.
+      synchronize: false,
+      migrations: [__dirname + '/migrations/*{.ts,.js}'],
+      migrationsRun: true,
     }),
     TasksModule,
+    HealthModule,
+    MetricsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

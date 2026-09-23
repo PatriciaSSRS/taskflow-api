@@ -17,7 +17,10 @@ export class TasksService {
     return this.tasksRepository.save(task);
   }
 
-  findAll(filters?: { status?: TaskStatus; priority?: TaskPriority }): Promise<Task[]> {
+  findAll(filters?: {
+    status?: TaskStatus;
+    priority?: TaskPriority;
+  }): Promise<Task[]> {
     return this.tasksRepository.find({ where: filters });
   }
 

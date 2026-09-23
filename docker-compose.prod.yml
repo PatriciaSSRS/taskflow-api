@@ -1,0 +1,68 @@
+name: taskflow-prod
+
+services:
+  api:
+    image: ghcr.io/patriciassrs/taskflow-api:${IMAGE_TAG:-latest}
+    container_name: taskflow-api
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:?defina DB_USER no .env}
+      DB_PASSWORD: ${DB_PASSWORD:?defina DB_PASSWORD no .env}
+      DB_NAME: ${DB_NAME:?defina DB_NAME no .env}
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 384M
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://127.0.0.1:3000/health/live']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  db:
+    image: postgres:16-alpine
+    container_name: taskflow-db
+    # Sem "ports:" de propósito: em produção o banco só é alcançável
+    # pela rede interna do compose, nunca do host.
+    environment:
+      POSTGRES_USER: ${DB_USER:?defina DB_USER no .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?defina DB_PASSWORD no .env}
+      POSTGRES_DB: ${DB_NAME:?defina DB_NAME no .env}
+    volumes:
+      - taskflow-db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  taskflow-db-data:

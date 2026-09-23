@@ -9,12 +9,27 @@ on:
 jobs:
   build-and-test:
     name: Lint, testes e build
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: taskflow
+          POSTGRES_PASSWORD: taskflow
+          POSTGRES_DB: taskflow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U taskflow"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       NODE_ENV: test
       DB_HOST: localhost
-      DB_PORT: 5433
+      DB_PORT: 5432
       DB_USER: taskflow
       DB_PASSWORD: taskflow
       DB_NAME: taskflow
@@ -29,28 +44,26 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Subir PostgreSQL de teste
-        run: |
-          docker rm -f taskflow-ci-db 2>/dev/null || true
-          docker run -d --name taskflow-ci-db \
-            -e POSTGRES_USER=taskflow \
-            -e POSTGRES_PASSWORD=taskflow \
-            -e POSTGRES_DB=taskflow \
-            -p 5433:5432 \
-            postgres:16-alpine
-          for i in $(seq 1 30); do
-            if docker exec taskflow-ci-db pg_isready -h 127.0.0.1 -U taskflow; then
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "PostgreSQL não subiu a tempo" && exit 1
-
       - name: Instalar dependências
         run: npm ci
 
+      - name: Auditoria de dependências (não bloqueia o pipeline)
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
       - name: Rodar lint
         run: npm run lint
+
+      - name: Verificar segredos versionados (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint do Dockerfile (Hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: error
 
       - name: Rodar testes automatizados (com cobertura)
         run: npm run test:cov
@@ -58,9 +71,13 @@ jobs:
       - name: Build da aplicação
         run: npm run build
 
-      - name: Build da imagem Docker
-        run: docker build -t taskflow-api:${{ github.sha }} .
+      - name: Build de validação da imagem Docker
+        run: docker build -t taskflow-api:ci-${{ github.sha }} .
 
-      - name: Derrubar PostgreSQL de teste
+      - name: Publicar relatório de cobertura
         if: always()
-        run: docker rm -f taskflow-ci-db || true
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7

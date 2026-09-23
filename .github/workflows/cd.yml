@@ -1,0 +1,152 @@
+name: CD
+
+# Só dispara depois que o workflow de CI terminar com sucesso na main
+# — nunca a partir de um push direto — garantindo que só entra na
+# esteira de entrega o código que já passou por lint, testes e build.
+# workflow_dispatch existe só para permitir reexecutar manualmente
+# uma implantação (ex.: depois de um scan que falhou por CVE corrigida).
+on:
+  workflow_run:
+    workflows: ['CI']
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/patriciassrs/taskflow-api
+
+jobs:
+  build-and-push:
+    name: Build e push da imagem (GHCR)
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+    steps:
+      - name: Checkout do commit que passou no CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Definir tag da imagem (sha curto do commit)
+        id: vars
+        run: echo "image_tag=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build multi-stage e push para o GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          build-args: |
+            GIT_COMMIT=${{ github.event.workflow_run.head_sha || github.sha }}
+            APP_VERSION=${{ steps.vars.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  scan:
+    name: Scan de vulnerabilidades (Trivy)
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login no GHCR (para puxar a imagem recém-publicada)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rodar Trivy e bloquear em Critical/High
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+
+  deploy:
+    name: Deploy (ambiente de homologação efêmero + aprovação manual)
+    needs: [build-and-push, scan]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR (deploy.sh faz o pull da imagem)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Este job roda num runner efêmero do GitHub em vez de uma VM
+      # real — não há infraestrutura AWS disponível para esta entrega.
+      # deploy.sh não sabe (nem precisa saber) onde está rodando: para
+      # apontar para produção de verdade bastaria rodar os mesmos
+      # scripts via SSH numa VM (ex.: appleboy/ssh-action), o que fica
+      # documentado no RELATORIO-FASE02.md como próximo passo.
+      - name: Deploy via docker compose
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: ./deploy/deploy.sh
+
+      - name: Smoke test (health + fluxo funcional de CRUD)
+        run: ./deploy/smoke-test.sh
+
+      - name: Rollback automático (smoke test falhou)
+        if: failure()
+        env:
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: ./deploy/rollback.sh
+
+      - name: Logs do container (diagnóstico)
+        if: always()
+        run: docker logs taskflow-api --tail 100 || true
+
+  release:
+    name: Release/tag no GitHub
+    needs: [build-and-push, deploy]
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Criar release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.build-and-push.outputs.image_tag }}"
+          gh release create "$TAG" \
+            --title "Deploy $TAG" \
+            --notes "Imagem: ${{ env.IMAGE_NAME }}:${TAG}. Publicada automaticamente pelo cd.yml após CI, scan Trivy e smoke test." \
+            --target ${{ github.event.workflow_run.head_sha || github.sha }} \
+            || echo "Release $TAG já existe, pulando."

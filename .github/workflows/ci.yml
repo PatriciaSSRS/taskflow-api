@@ -9,27 +9,12 @@ on:
 jobs:
   build-and-test:
     name: Lint, testes e build
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: taskflow
-          POSTGRES_PASSWORD: taskflow
-          POSTGRES_DB: taskflow
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U taskflow"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    runs-on: self-hosted
 
     env:
       NODE_ENV: test
       DB_HOST: localhost
-      DB_PORT: 5432
+      DB_PORT: 5433
       DB_USER: taskflow
       DB_PASSWORD: taskflow
       DB_NAME: taskflow
@@ -43,6 +28,23 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+
+      - name: Subir PostgreSQL de teste
+        run: |
+          docker rm -f taskflow-ci-db 2>/dev/null || true
+          docker run -d --name taskflow-ci-db \
+            -e POSTGRES_USER=taskflow \
+            -e POSTGRES_PASSWORD=taskflow \
+            -e POSTGRES_DB=taskflow \
+            -p 5433:5432 \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            if docker exec taskflow-ci-db pg_isready -h 127.0.0.1 -U taskflow; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "PostgreSQL não subiu a tempo" && exit 1
 
       - name: Instalar dependências
         run: npm ci
@@ -58,3 +60,7 @@ jobs:
 
       - name: Build da imagem Docker
         run: docker build -t taskflow-api:${{ github.sha }} .
+
+      - name: Derrubar PostgreSQL de teste
+        if: always()
+        run: docker rm -f taskflow-ci-db || true

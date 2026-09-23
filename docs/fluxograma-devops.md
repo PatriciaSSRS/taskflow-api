@@ -28,18 +28,18 @@ flowchart LR
 ## 2. Gatilhos e pontos de decisão do pipeline
 
 ```mermaid
-flowchart TD
-    Push[push/PR na main] --> CI{CI passou?<br/>lint + testes + cobertura ≥75% + build}
-    CI -->|não| FimCI[Pipeline para aqui<br/>PR não pode ser mesclado]
-    CI -->|sim| Build[cd.yml: build multi-stage + push GHCR<br/>tags: sha-commit e latest]
-    Build --> Trivy{Trivy encontrou<br/>Critical/High?}
-    Trivy -->|sim| FimTrivy[Deploy bloqueado<br/>imagem fica só no registry]
-    Trivy -->|não| Aprov{Revisor aprovou<br/>o Environment production?}
-    Aprov -->|não| Espera[Pipeline aguarda aprovação manual]
-    Aprov -->|sim| Deploy[deploy.sh: docker compose pull + up -d]
-    Deploy --> Smoke{Smoke test passou?<br/>health/ready + /metrics + CRUD}
-    Smoke -->|não| Rollback[rollback.sh: volta para a última<br/>imagem saudável registrada]
-    Smoke -->|sim| Release[Release/tag criada no GitHub]
+flowchart LR
+    Push[push/PR na main] --> CI{CI passou?}
+    CI -->|não| FimCI[Pipeline para aqui]
+    CI -->|sim| Build[Build multi-stage<br/>+ push GHCR]
+    Build --> Trivy{Trivy: Critical/High?}
+    Trivy -->|sim| FimTrivy[Deploy bloqueado]
+    Trivy -->|não| Aprov{Revisor aprovou<br/>o Environment?}
+    Aprov -->|não| Espera[Aguarda aprovação]
+    Aprov -->|sim| Deploy[deploy.sh:<br/>compose pull + up]
+    Deploy --> Smoke{Smoke test<br/>passou?}
+    Smoke -->|não| Rollback[rollback.sh]
+    Smoke -->|sim| Release[Release/tag<br/>no GitHub]
 ```
 
 ## 3. Arquitetura em runtime (produção)
